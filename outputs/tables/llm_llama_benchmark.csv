@@ -1,0 +1,4 @@
+n_ctx,Overall Acc,college_computer_science,college_physics,high_school_world_history,high_school_biology,professional_medicine,Time(s),Peak VRAM(MB)
+1024,0.227,0.28,0.225,0.274,0.206,0.191,115.2,0.0
+2048,0.227,0.28,0.225,0.274,0.206,0.191,115.8,0.0
+5012,0.227,0.28,0.225,0.274,0.206,0.191,113.1,0.0

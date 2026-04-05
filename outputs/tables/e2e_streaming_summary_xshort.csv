@@ -1,0 +1,2 @@
+tier,n_samples,avg_dur_s,ttft_ms_mean,ttft_ms_std,ttft_ms_p50,ttft_ms_p95,ttfa_ms_mean,ttfa_ms_std,ttfa_ms_p50,ttfa_ms_p95,asr_s_mean,asr_s_std,asr_s_p50,asr_s_p95,llm_s_mean,llm_s_std,llm_s_p50,llm_s_p95,tts_s_mean,tts_s_std,tts_s_p50,tts_s_p95,total_s_mean,total_s_std,total_s_p50,total_s_p95,tok_s_mean,tok_s_std,tok_s_p50,tok_s_p95,n_chunks_mean,n_chunks_std,n_chunks_p50,n_chunks_p95
+xshort,20,0.8,2141.1,470.1,2246.7,2279.3,2958.8,513.6,2932.6,3589.8,0.2,0.0,0.2,0.2,2.2,0.4,2.3,2.4,1.7,0.8,1.8,2.9,4.1,0.7,4.3,5.1,20.6,30.5,14.8,34.5,2.5,1.1,3.0,4.0

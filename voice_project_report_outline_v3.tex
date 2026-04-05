@@ -1,0 +1,693 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{red},
+    breaklines=true,
+    columns=fullflexible,
+    frame=single,
+    showstringspaces=false
+}
+
+\title{\textbf{Project Report: End-to-End Voice Interaction System}}
+\author{Liyun Zhang}
+\date{April 3, 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report presents the design, deployment, and evaluation of an end-to-end voice interaction system composed of Automatic Speech Recognition (ASR), a Large Language Model (LLM), and Text-to-Speech (TTS). Multiple candidate models were evaluated for each module before system integration: three ASR models on LibriSpeech, three LLM models on MMLU (two in the main model-comparison benchmark, one additional for prompt engineering), and three TTS models on EmergentTTS-Eval. The report covers model selection, standalone benchmark design, module-level results, end-to-end pipeline evaluation, and prompt engineering.
+\end{abstract}
+
+\section{Introduction}
+
+Voice interaction systems combine speech recognition, language understanding, and speech synthesis into a single pipeline. A typical system takes spoken audio as input, converts it into text, generates a textual response, and then synthesizes the response back into speech. This design is widely used in voice assistants, speech translation, and interactive question answering systems.
+
+This project focuses on model selection, practical deployment, and system evaluation. Rather than relying on a single model in each stage, multiple candidate models were evaluated for each module: three for ASR, three for LLM, and three for TTS. Each model was tested independently before integration. This design makes it possible to compare quality, runtime cost, and deployment feasibility under the same workflow.
+
+\subsection{Project Goal}
+
+The goal of this project is to design, deploy, and evaluate an end-to-end voice interaction system by integrating three core components: Automatic Speech Recognition (ASR), a Large Language Model (LLM), and Text-to-Speech (TTS). The system takes spoken audio as input, converts it into text through ASR, generates a text response through the LLM, and finally synthesizes the response back into speech using TTS.
+
+This project focuses on both model selection, evaluation and system integration. For ASR, three models are benchmarked: two deployment-feasible candidates and one larger accuracy-reference model. For LLM, two models are compared in the main benchmark and a third is added in the prompt engineering study. For TTS, three candidates are evaluated. Models are compared in terms of deployment cost, inference speed, and output quality. Based on these results, suitable models are combined into a complete interactive pipeline. The system is then evaluated from an overall perspective, including end-to-end latency, output quality, stability, and deployment feasibility on practical hardware platforms.
+
+In addition to the basic pipeline, this project also explores interface-level interaction design for bonus functionality. The final system supports user interaction through a simple interface with model selection options, making it easier to compare different ASR, LLM, and TTS combinations in a unified workflow.
+
+\section{System Overview}
+
+This project implements a fully local speech-to-speech assistant. The system includes ASR, LLM inference, and neural TTS synthesis in one pipeline. All stages run on a single local machine. No cloud service is used during inference.
+
+For each module, multiple candidate models were benchmarked before integration. Three ASR models were evaluated: a lightweight baseline (\texttt{faster-whisper-small}), a competing lightweight model (\texttt{moonshine-base}), and a larger accuracy-reference model (\texttt{faster-whisper-large-v3-turbo}). Three LLM candidates and three TTS candidates were also evaluated independently. The final integrated pipeline uses the models selected from these standalone benchmarks.
+
+The design emphasizes local deployment, modular structure, and measurable latency at each stage, with the goal of examining whether the full pipeline can remain practical on consumer hardware.
+
+\section{Model Selection}
+
+This project evaluates multiple candidate models for each module in the voice interaction pipeline: three ASR models, two LLM models, and three TTS models. The selection was constrained by three practical factors. The models had to run on accessible hardware, fit into a lightweight deployment workflow, and support later system integration.
+
+\subsection{ASR Model Selection}
+
+Three ASR models were evaluated: \texttt{faster-whisper-small}, \texttt{moonshine-base}, and\\ \texttt{faster-whisper-large-v3-turbo}. The small Whisper model represents a widely used baseline with stable CTranslate2 deployment support. Moonshine-Base is a lightweight alternative included for runtime and accuracy comparison. The large Turbo variant was added as an accuracy ceiling reference to contextualize the quality gap relative to the two deployment-feasible candidates.
+
+\subsection{LLM Model Selection}
+
+The target machine is equipped with a 12 GB VRAM GPU. Model size under Q4\_K\_M quantization is approximately $0.5 \times N_\text{params}$ bytes, where each parameter occupies roughly 4.5 bits on average. A rough estimate for GPU memory at inference is:
+\[
+M_\text{VRAM} \approx N_\text{params} \times 0.5\,\text{B} + M_\text{KV},
+\]
+where $M_\text{KV}$ is the KV-cache overhead, which scales with context length and layer count. For a 7B model at Q4\_K\_M this yields approximately 4--5 GB for weights alone, and 7B+ models can exceed 8 GB when KV-cache is included, leaving insufficient headroom for the concurrent ASR and TTS services. Models at the 3B scale consume roughly 2 GB for weights, keeping total pipeline memory well within the 12 GB budget.
+
+Based on this constraint, the LLM candidates were limited to the sub-4B range. Two instruction-tuned LLMs were selected for the main model-comparison benchmark in GGUF format: \texttt{Qwen2.5-1.5B-Instruct} (Q4\_K\_M, $\approx$1.1 GB) and \texttt{Llama-3.2-3B-Instruct} (Q4\_K\_M, $\approx$2.0 GB). Both were deployed with \texttt{llama-cpp-python}. The Qwen model was chosen as a lighter candidate; the Llama model was chosen as a larger comparison point with stronger expected reasoning ability. This pair makes it possible to examine the trade-off between model size, response quality, and runtime cost within the memory budget.
+
+A third model, \texttt{Qwen2.5-3B-Instruct} (Q4\_K\_M, $\approx$2.0 GB), was additionally included in the prompt engineering benchmark to study whether a mid-sized model within the same Qwen family benefits more from few-shot and chain-of-thought prompting than the 1.5B variant. This model was not included in the initial MMLU model-comparison run because it was added after the primary selection phase.
+
+\subsection{TTS Model Selection}
+
+Three TTS models were evaluated. \texttt{Kokoro} is a lightweight autoregressive TTS model that produces high-intelligibility speech without any reference-speaker conditioning; it was included as a speed and quality baseline. \texttt{GPT-SoVITS} is a speaker-conditioned synthesis system supporting voice cloning via a reference audio clip, included to evaluate reference-based speaker adaptation. \texttt{F5-TTS} is a flow-matching zero-shot voice cloning model selected for the integrated pipeline due to its natural prosody and accessible Python API. GPT-SoVITS and F5-TTS both support reference-speaker conditioning and are directly comparable in terms of intelligibility, speaker similarity, and inference latency; Kokoro serves as a non-cloning baseline to assess the intelligibility ceiling achievable without speaker adaptation.
+
+\subsection{Deployment Strategy}
+
+All model files were stored in a fixed project directory and loaded into the runtime environment before inference. During notebook-based testing, the models were copied to a local runtime folder to avoid repeated downloads and reduce storage management overhead. This design kept the evaluation process stable across different runs and made the benchmark workflow easier to reproduce.
+
+% 导言区需要 \usepackage{graphicx}
+
+\begin{table}[H]
+\centering
+\caption{Selected models for each module.}
+\label{tab:model_selection}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llll}
+\toprule
+Module & Model & Format / Size & Selection Purpose \\
+\midrule
+ASR & faster-whisper-small & CTranslate2, FP16/INT8, 462 MB & Deployment baseline \\
+ASR & moonshine-base & Lightweight ASR, $\sim$100 MB & Speed comparison \\
+ASR & faster-whisper-large-v3-turbo & CTranslate2, INT8/FP16, $\sim$1.5 GB & Accuracy upper bound \\
+LLM & Qwen2.5-1.5B-Instruct & GGUF, Q4\_K\_M, 1.1 GB & Small deployment candidate \\
+LLM & Llama-3.2-3B-Instruct & GGUF, Q4\_K\_M, 2.0 GB & Larger comparison model \\
+LLM & Qwen2.5-3B-Instruct & GGUF, Q4\_K\_M, 2.0 GB & Prompt engineering study \\
+TTS & Kokoro & Autoregressive TTS, $\sim$0.3 GB & Intelligibility baseline (no cloning) \\
+TTS & GPT-SoVITS & Speaker-conditioned TTS & Voice cloning candidate \\
+TTS & F5-TTS & Flow-matching, $\sim$1.3 GB & Integrated pipeline model \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\section{Benchmark Overview}
+
+The benchmark was conducted in three stages. First, three ASR models were evaluated independently on LibriSpeech test-clean. Second, two LLM candidates were tested under the same inference setting on MMLU. Third, the two TTS models were verified separately before later integration. This design isolates the behavior of each module and makes model comparison more direct.
+
+All standalone benchmarks were run before full pipeline integration. The goal of this stage was not end-to-end quality, but candidate selection for the later voice interaction system.
+
+\section{ASR Benchmark}
+
+\subsection{Benchmark Setup}
+
+The ASR benchmark was conducted as a standalone transcription test on the LibriSpeech test-clean split \cite{panayotov2015librispeech}. LibriSpeech is a standard English read-speech corpus and is widely used in ASR evaluation. A subset of 200 samples was drawn from the full 2,620-utterance test-clean set. The audio is 16 kHz mono. The benchmark data were stored locally and loaded through the HuggingFace \texttt{datasets} library. Each ASR model was loaded under the same execution environment with CUDA-accelerated inference (\texttt{float16} for faster-whisper, \texttt{float16} for moonshine). The test audio was passed to the model and the output transcript was collected together with runtime statistics.
+
+Three ASR models were evaluated: \texttt{faster-whisper-small}, \texttt{moonshine-base}, and \texttt{faster-whisper-large-v3-turbo}. The same 200-sample benchmark condition was applied to all three models.
+
+\subsection{Evaluation Metrics}
+
+Two metrics were used in the ASR benchmark: word error rate (WER) and runtime speed. WER measures transcription accuracy by comparing the predicted text with the reference transcript. A lower WER indicates better recognition quality. Runtime efficiency was measured with the real-time speed factor reported in the experiment. A higher value indicates faster inference relative to audio duration.
+
+WER is defined as
+\[
+WER = \frac{S + D + I}{N},
+\]
+where $S$ is the number of substitutions, $D$ is the number of deletions, $I$ is the number of insertions, and $N$ is the number of words in the reference transcript.
+
+\subsection{Benchmark Results}
+
+The ASR results are summarized in Table~\ref{tab:asr_results}. Moonshine-Base achieved a WER of 15.39\%, while Faster-Whisper-Small reached 15.98\%; the quality gap between the two deployment-sized models is only 0.59 pp. Faster-Whisper-Large-V3-Turbo reached 6.83\% WER, confirming that larger model capacity provides a substantial quality improvement at the cost of a heavier deployment footprint. In terms of runtime efficiency, Faster-Whisper-Small was fastest (RTFx $= 29.14$), followed by Moonshine-Base (RTFx $= 24.64$) and the large model (RTFx $= 20.93$). All three models ran well above real-time under CUDA.
+
+\begin{table}[H]
+\centering
+\caption{ASR benchmark results on LibriSpeech test-clean (200 samples, CUDA).}
+\label{tab:asr_results}
+\begin{tabular}{lcc}
+\toprule
+Model & WER (\%) & RTFx \\
+\midrule
+Moonshine-Base              & 15.39 & 24.64 \\
+Faster-Whisper-Small        & 15.98 & 29.14 \\
+Faster-Whisper-Large-V3-Turbo & 6.83  & 20.93 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Discussion}
+
+Among the two deployment-feasible candidates, Moonshine-Base achieves marginally lower WER (15.39\% vs.\ 15.98\%), while Faster-Whisper-Small is faster (RTFx 29.14 vs.\ 24.64). The 0.59 pp WER difference is small; the 4.5-point RTFx advantage of Faster-Whisper-Small is more practically relevant in a latency-sensitive pipeline. Faster-Whisper-Large-V3-Turbo demonstrates that a WER below 7\% is achievable at this data scale, at the cost of a heavier model and lower RTFx. Based on this standalone benchmark, Faster-Whisper-Small was the preferred candidate; however, during integration it was replaced with Faster-Whisper-Large-V3-Turbo because the smaller model produced frequent hallucinated transcripts on short or low-energy inputs in the streaming pipeline (see Section~\ref{sec:integration_challenges}). The large model's lower WER eliminated most hallucination cases, and its ASR latency (0.16--0.90 s across input tiers, Table~\ref{tab:streaming_latency}) remains acceptable for real-time use.
+
+\section{LLM Benchmark}
+
+\subsection{Benchmark Setup}
+
+The LLM benchmark was based on selected subsets from MMLU \cite{hendryckstest2021}, including college\_computer\_science, college\_physics,  high\_school\_biology, high\_school\_world\_history, and professional\_medicine. These subsets were chosen to cover several knowledge domains. They include both STEM and non-STEM tasks.
+
+Three LLM candidates were evaluated: Qwen2.5-1.5B-Instruct, Qwen2.5-3B-Instruct and Llama-3.2-3B-Instruct. All models were loaded in GGUF format with \texttt{Q4\_K\_M} quantization. Inference was performed with \texttt{llama-cpp-python} compiled locally with CUDA support (see Section~\ref{sec:integration_challenges} for the toolchain details). In addition to model-level comparison, different context-length settings were tested, as this parameter affects both benchmark accuracy and deployment cost.
+
+\subsection{Evaluation Standard}
+
+Each benchmark sample is a multiple-choice question. The model must produce one final answer. A prediction is counted as correct only when the selected option matches the reference answer. Accuracy is used as the main metric:
+\[
+\mathrm{Accuracy} =
+\frac{\text{Number of Correct Predictions}}
+{\text{Total Number of Questions}}.
+\]
+
+Accuracy is reported for each subject subset. The average accuracy across all selected subsets is also reported as a compact summary of overall performance. Inference time was recorded with \texttt{time.perf\_counter()}. Peak VRAM was not directly measurable because \texttt{llama-cpp-python} manages GPU memory outside PyTorch's allocator; \texttt{torch.cuda.max\_memory\_allocated()} returns 0 regardless of actual VRAM use.
+
+\subsection{Benchmark Results}
+
+Table~\ref{tab:llm_results} compares Qwen2.5-1.5B-Instruct and Llama-3.2-3B-Instruct on the five-subject MMLU subset. Qwen2.5-1.5B achieves higher average accuracy (24.4\% vs.\ 23.3\%) and lower runtime (54.6 s vs.\ 68.8 s) despite being a smaller model, and was therefore selected for the integrated pipeline.
+
+\begin{table}[H]
+\centering
+\caption{LLM model comparison on 5-subject MMLU subset (Q4\_K\_M, \texttt{n\_ctx=2048}, zero-shot).}
+\label{tab:llm_results}
+\begin{tabular}{lccccccc}
+\toprule
+Model & CS & Physics & Biology & History & Medicine & Avg.\ Acc. & Time (s) \\
+\midrule
+Qwen2.5-1.5B-Instruct & 29.0\% & 19.6\% & 22.9\% & 31.6\% & 19.9\% & 24.4\% & \phantom{0}54.6 \\
+Llama-3.2-3B-Instruct & 28.0\% & 21.6\% & 21.6\% & 27.4\% & 20.6\% & 23.3\% & \phantom{0}68.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:llm_ctx_results} shows the context-length sensitivity study. Accuracy is identical across all three \texttt{n\_ctx} settings for both models, and runtime varies by less than 2 s, confirming that \texttt{n\_ctx=2048} is a safe default for short conversational prompts.
+
+\begin{table}[H]
+\centering
+\caption{LLM context-length sensitivity (5-subject MMLU, zero-shot).}
+\label{tab:llm_ctx_results}
+\begin{tabular}{lcccc}
+\toprule
+Model & \texttt{n\_ctx} & Avg.\ Acc. & Time (s) & Peak VRAM \\
+\midrule
+Qwen2.5-1.5B & 1024 & 24.2\% & \phantom{0}67.4 & N/A$^\dagger$ \\
+Qwen2.5-1.5B & 2048 & 24.2\% & \phantom{0}69.1 & N/A$^\dagger$ \\
+Qwen2.5-1.5B & 5012 & 24.2\% & \phantom{0}68.3 & N/A$^\dagger$ \\
+Llama-3.2-3B & 1024 & 22.7\% & 115.2           & N/A$^\dagger$ \\
+Llama-3.2-3B & 2048 & 22.7\% & 115.8           & N/A$^\dagger$ \\
+Llama-3.2-3B & 5012 & 22.7\% & 113.1           & N/A$^\dagger$ \\
+\bottomrule
+\multicolumn{5}{l}{$^\dagger$ \texttt{llama-cpp-python} manages GPU memory outside PyTorch; VRAM is not measurable via \texttt{torch.cuda}.} \\
+\end{tabular}
+\end{table}
+
+\subsection{Prompt Engineering}
+
+\subsubsection{Overview}
+
+Prompt design directly affects the quality and format of LLM responses in a voice interaction system. In a speech-to-speech pipeline, the LLM output must be short, fluent, and free of formatting artifacts that cannot be rendered in audio. Three prompt strategies were evaluated on an extended ten-subject MMLU set (role prompting was designed but not executed in this benchmark run): high\_school\_mathematics, high\_school\_physics, high\_school\_biology, high\_school\_world\_history, high\_school\_us\_history, college\_mathematics, college\_physics, college\_biology, philosophy, and international\_law. Three models were evaluated: \texttt{Qwen2.5-1.5B}, \texttt{Qwen2.5-3B}, and \texttt{Llama-3.2-3B} (all Q4\_K\_M, \texttt{n\_ctx=2048}, \texttt{temperature=0}).
+
+\subsubsection{Prompt Strategies}
+
+\textbf{Zero-shot} is the baseline. The question and choices are presented directly and the model is asked for a single letter:
+\begin{lstlisting}
+Question: {question}
+A. {A}  B. {B}  C. {C}  D. {D}
+Answer with just the letter (A, B, C, or D):
+\end{lstlisting}
+
+\textbf{Few-shot} provides three in-context question--answer examples drawn from the same subject before the test question. Demos are taken from the first three samples; those samples are excluded from scoring to prevent data leakage.
+
+\textbf{Chain-of-thought (CoT)} uses a few-shot CoT format: two hand-crafted subject-specific reasoning examples (question $\to$ step-by-step reasoning $\to$ answer letter) are prepended before the test question. The model is instructed to follow the same reasoning pattern and end with ``Answer: X''. The output is parsed with the regex \texttt{Answer\textbackslash{}s*:\textbackslash{}s*([ABCD])} with a fallback to the last letter found. \texttt{max\_tokens=300} is used. This budget is sufficient for Qwen2.5-3B but causes high truncation rates for smaller models (see Table~\ref{tab:prompt_results}).
+
+
+
+\subsubsection{Benchmark Results}
+
+\begin{table}[H]
+\centering
+\caption{Prompt strategy benchmark results (\texttt{n\_ctx=2048}, 10-subject MMLU subset, \texttt{temperature=0}).}
+\label{tab:prompt_results}
+\begin{tabular}{llccc}
+\toprule
+Model & Strategy & Avg.\ Accuracy & Time (s) & CoT Truncate Rate \\
+\midrule
+Qwen2.5-1.5B & Zero-shot & 54.9\% & \phantom{0}99.8  & --- \\
+Qwen2.5-1.5B & Few-shot  & 58.1\% & 109.9            & --- \\
+Qwen2.5-1.5B & CoT       & 58.8\% & 2053.5           & 77.4\%$^\dagger$ \\
+\midrule
+Qwen2.5-3B   & Zero-shot & 59.2\% & 141.7            & --- \\
+Qwen2.5-3B   & Few-shot  & 66.4\% & 113.1            & --- \\
+Qwen2.5-3B   & CoT       & 70.4\% & 1713.7           & 19.4\% \\
+\midrule
+Llama-3.2-3B & Zero-shot & 46.3\% & 123.5            & --- \\
+Llama-3.2-3B & Few-shot  & 53.9\% & \phantom{0}94.0  & --- \\
+Llama-3.2-3B & CoT       & 59.2\% & 2798.5           & 91.6\%$^\dagger$ \\
+\bottomrule
+\multicolumn{5}{l}{$^\dagger$ Truncate rate $>50\%$: most CoT traces did not complete within \texttt{max\_tokens=300};} \\
+\multicolumn{5}{l}{\quad answers were recovered via regex fallback, which may understate true CoT accuracy.} \\
+\multicolumn{5}{l}{Role prompting was not evaluated in this benchmark run.} \\
+\end{tabular}
+\end{table}
+
+\subsubsection{Discussion}
+
+Three prompt strategies were evaluated across three model sizes. Zero-shot serves as the baseline. Few-shot and CoT both improve accuracy, but with very different cost profiles.
+
+\textbf{Few-shot} consistently outperforms zero-shot across all three models with only modest runtime overhead. The gains range from 3.2 pp (Qwen2.5-1.5B: 54.9\%~$\to$~58.1\%) to 7.2 pp (Qwen2.5-3B: 59.2\%~$\to$~66.4\%) and 7.6 pp (Llama-3.2-3B: 46.3\%~$\to$~53.9\%). The runtime does not increase proportionally---for Llama-3.2-3B it actually decreases from 123.5 s to 94.0 s, likely because the structured demo format constrains output length and reduces sampling variance.
+
+\textbf{CoT} yields the highest accuracy overall but at a severe latency penalty. Qwen2.5-3B reaches 70.4\% accuracy under CoT, the best result across all settings, but requires 1713.7 s---approximately 12$\times$ longer than its zero-shot runtime. The truncation rate problem is serious for smaller models: Qwen2.5-1.5B and Llama-3.2-3B truncated 77.4\% and 91.6\% of their CoT outputs respectively within the \texttt{max\_tokens=300} budget, meaning most answers were extracted by regex fallback rather than from a complete reasoning trace. This limits the reliability of the CoT accuracy numbers for these two models.
+
+\textbf{Model size} has a larger impact than prompt strategy for the zero-shot baseline. Qwen2.5-3B at zero-shot (59.2\%) already outperforms Llama-3.2-3B at CoT (59.2\%) while running in 141.7 s versus 2798.5 s. Within the Qwen family, scaling from 1.5B to 3B adds 4.3 pp at zero-shot and 7.6 pp at CoT.
+
+\textbf{Deployment implication.} In the integrated voice pipeline, CoT is impractical: the multi-second generation time and the need to strip reasoning traces before TTS synthesis both add unacceptable latency. Few-shot provides a better trade-off---meaningful accuracy improvement with modest token overhead. Zero-shot with a tight system prompt remains the default for latency-sensitive turns.
+
+\section{TTS Benchmark}
+
+\subsection{Benchmark Setup}
+
+Three TTS models were evaluated: \texttt{Kokoro}, \texttt{GPT-SoVITS}, and \texttt{F5-TTS}. All three were benchmarked on 20 samples from EmergentTTS-Eval under the same evaluation condition. GPT-SoVITS and F5-TTS were conditioned on the same reference audio clip; Kokoro runs without any speaker reference and was included as a non-cloning intelligibility baseline.
+
+The round-trip WER metric was used as the primary quality measure. Each synthesized waveform was passed through Faster-Whisper-Small, and WER between the re-transcription and the original text was computed. This jointly captures intelligibility and naturalness without subjective listening panels. For reference-based models, speaker similarity was additionally computed to measure how closely the synthesized voice matches the reference speaker.
+
+\subsection{Evaluation Standard}
+
+The TTS benchmark used three metrics. \textbf{Round-trip WER} measures how accurately the synthesized speech can be re-recognized by an ASR model:
+\[
+\mathrm{RT\text{-}WER} = \mathrm{WER}\bigl(\mathrm{ASR}(\hat{s}),\; t\bigr),
+\]
+where $\hat{s}$ is the synthesized audio and $t$ is the original text. A lower RT-WER indicates higher intelligibility. \textbf{Speaker similarity} measures cosine similarity between the speaker embedding of the synthesized audio and the reference audio; it applies only to reference-conditioned models. \textbf{Average inference latency} measures wall-clock synthesis time per sample.
+
+\begin{table}[H]
+\centering
+\caption{TTS benchmark results (20 samples, EmergentTTS-Eval).}
+\label{tab:tts_results}
+\begin{tabular}{lcccc}
+\toprule
+Model & RT-WER (\%) & Spk Sim & Avg Latency (s) & Samples \\
+\midrule
+Kokoro     & \phantom{0}5.52 & N/A$^\dagger$ & 0.15 & 20 \\
+GPT-SoVITS & 46.49           & 0.83          & 3.75 & 20 \\
+F5-TTS     & 18.77           & 0.90          & 1.30 & 20 \\
+\bottomrule
+\multicolumn{5}{l}{$^\dagger$ Kokoro does not support reference-speaker conditioning; speaker similarity is not applicable.} \\
+\end{tabular}
+\end{table}
+
+\subsection{Discussion}
+
+Kokoro achieves the lowest RT-WER (5.52\%) and the fastest latency (0.15 s/sample) by a wide margin, confirming that a fixed-voice autoregressive model can produce highly intelligible speech at low cost. However, Kokoro does not support speaker conditioning, so it cannot replicate a user-supplied reference voice.
+
+GPT-SoVITS achieves a speaker similarity of 0.83, but its RT-WER of 46.49\% and latency of 3.75 s/sample indicate poor intelligibility and high inference cost among the two reference-conditioned candidates.
+
+F5-TTS outperforms GPT-SoVITS on all three measured metrics: RT-WER 18.77\%, speaker similarity 0.90, and latency 1.30 s/sample. Although its RT-WER is higher than Kokoro's, F5-TTS uniquely combines reasonable intelligibility with zero-shot voice cloning capability. Since the project requires reference-speaker voice cloning, F5-TTS was selected as the TTS backend for the integrated pipeline.
+
+\section{Integration Overview}
+
+The integrated assistant is organized as three independent microservices. Each service runs in a separate Conda environment. This design avoids dependency conflicts between model backends and makes each stage easier to update or debug.
+
+\begin{table}[H]
+\centering
+\caption{Microservice organization of the integrated assistant.}
+\label{tab:microservice_arch}
+\begin{tabular}{llll}
+\toprule
+Stage & Model & Environment & Endpoint \\
+\midrule
+ASR & Faster-Whisper-Large-V3-Turbo & \texttt{moonshine} & \texttt{localhost:8001} \\
+LLM & Qwen2.5-1.5B Q4\_K\_M & \texttt{llm} & \texttt{localhost:8002} \\
+TTS & F5-TTS voice cloning & \texttt{gptsovits} & \texttt{localhost:8003} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[htbp] % h:当前位置, t:顶部, b:底部, p:独立一页
+  \centering % 图片居中
+  \includegraphics[width=0.8\textwidth]{arch.png} % 插入图片并设置宽度
+  \caption{High-level system architecture of the end-to-end voice interaction assistant.} % 图片下方的文字
+  \label{fig:my_image} % 用于正文引用的标签
+\end{figure}
+
+
+Each microservice is implemented as a FastAPI server. Each service exposes a \texttt{/health} endpoint for liveness checks. The front end is implemented with Gradio and coordinates the three stages in sequence:
+\[
+\text{Microphone} \xrightarrow{\text{WebSocket}} \text{ASR} \xrightarrow{\text{WebSocket}} \text{LLM} \xrightarrow{\text{HTTP}} \text{TTS} \rightarrow \text{Speaker}.
+\]
+
+The ASR and LLM services communicate with the Gradio orchestrator over persistent WebSocket connections, which eliminate per-request TCP handshake overhead and enable token-level streaming from the LLM. The TTS service receives the response text over HTTP and returns synthesized WAV bytes in the response body; this stage does not benefit from streaming at the transport layer because audio is assembled as complete sentence chunks before playback.
+
+Audio from the microphone is converted to WAV bytes and sent to the ASR service. The ASR stage runs Faster-Whisper decoding with \texttt{beam\_size=5}. The transcript is forwarded over WebSocket to the LLM service. The LLM stage uses \texttt{llama-cpp-python} with a 4-bit quantized Qwen2.5 model and streams reply tokens back via server-sent events, with \texttt{max\_tokens=400} for conversational turns. The response text is sent to the TTS service, which synthesizes each sentence chunk independently using F5-TTS with a reference voice clip for zero-shot speaker cloning. Stage-level latency is recorded server-side with \texttt{time.perf\_counter()} and returned in the response metadata.
+
+This microservice structure has two practical advantages. First, each model can be changed without modifying the other stages. Second, server-side latency can be measured directly at each stage with \texttt{time.perf\_counter()}. This provides higher-resolution timing data for a localhost pipeline than a single end-to-end measurement alone.
+
+\subsection{Integration Challenges}
+\label{sec:integration_challenges}
+
+Several non-trivial issues arose during integration that required significant debugging time before the pipeline became stable.
+
+\paragraph{1.\ \texttt{llama-cpp-python} compilation and toolchain mismatch.}
+The first obstacle was getting \texttt{llama-cpp-python} to run with CUDA acceleration on the target Windows machine. Multiple prebuilt wheels were tried, but none matched the exact CUDA toolkit version installed on the system, causing either import errors or silent CPU-only fallback. The issue was resolved by compiling the package from source: the NVIDIA CUDA toolkit and the MSVC build tools were configured manually, environment variables \texttt{CMAKE\_ARGS} and \texttt{FORCE\_CMAKE} were set to point the build system at the correct CUDA paths, and the package was then built with \texttt{pip install llama-cpp-python --no-binary :all:}. Development and debugging were done through VS Code remote access. This step consumed a significant portion of the early integration phase but was necessary to achieve the $\approx$85--117 tok/s LLM throughput reported in Section~\ref{sec:overall_eval}.
+
+\paragraph{2.\ Front-end auto-record mode: silence frames and ASR hallucination.}
+The Gradio microphone component in automatic (voice-activity) mode frequently captured long stretches of near-silence between words, or triggered on ambient noise. When such audio was forwarded to Faster-Whisper, the model produced hallucinated transcripts---common outputs included repeated filler phrases such as ``Thank you for watching'' or ``\ldots'' characters---rather than an empty string. Two mitigations were applied. First, a short-time energy threshold was implemented on the captured PCM buffer: frames whose RMS amplitude fell below a configurable threshold (default $5\times10^{-3}$) were classified as silence and excluded before the WAV payload was assembled. Second, a minimum-duration guard was added so that recordings shorter than 0.5 s were discarded entirely without calling the ASR endpoint. Together these two filters eliminated most silence-triggered hallucinations and stabilised the per-turn transcript quality.
+
+\paragraph{3.\ HTTP round-trip latency and migration to WebSocket.}
+The initial design used plain HTTP POST requests between the Gradio front end and each FastAPI microservice. Although latency measurements at the service level were low, the observable per-turn delay from the user's perspective was noticeably higher than the sum of the three stage times. Profiling revealed that repeated TCP connection setup and HTTP header overhead on localhost added 50--150 ms of overhead per stage per turn---significant relative to the 0.20 s ASR and 0.28 s LLM times shown in Table~\ref{tab:e2e_latency}. The communication layer between the front-end orchestrator and the ASR and LLM services was migrated to WebSocket (\texttt{websockets} library on the client side, \texttt{fastapi.WebSocket} on the server side). Persistent connections eliminated per-request connection overhead and also enabled the token-level streaming described in the Bonus Features section. After migration, the measured end-to-end latency converged to the values in Table~\ref{tab:e2e_latency}.
+
+
+\section{Integrated Voice Interaction System}
+
+This section summarizes the integrated speech-to-speech assistant after standalone model selection. The pipeline takes spoken audio as input, converts it into text through ASR, generates a reply through the LLM, and synthesizes the reply through TTS.
+\begin{figure}[htbp] % h:当前位置, t:顶部, b:底部, p:独立一页
+  \centering % 图片居中
+  \includegraphics[width=0.8\textwidth]{UI.png} % 插入图片并设置宽度
+  \caption{Frontend User Interface For Integrated Voice Interaction System .} 
+  \label{fig:my_image} % 用于正文引用的标签
+\end{figure}
+\subsection{Pipeline Design}
+
+The integrated pipeline follows the structure below:
+\begin{figure}[htbp] % h:当前位置, t:顶部, b:底部, p:独立一页
+  \centering % 图片居中
+  \includegraphics[width=0.8\textwidth]{data.png} % 插入图片并设置宽度
+  \caption{Data flow diagram of the microservice pipeline, including WebSocket communication and streaming paths.} % 图片下方的文字
+  \label{fig:my_image} % 用于正文引用的标签
+\end{figure}
+
+\subsection{Implementation Notes}
+
+The front end records audio from the microphone and sends it to the ASR service. The transcript returned by ASR is forwarded to the LLM service. The generated text is then sent to the TTS service. The final waveform is played back at the client side. Since each service reports its own timing, the integrated system can display a stage-level latency breakdown for each turn.
+
+\section{Benchmark Design for the Integrated System}
+\label{sec:bench_integrated}
+
+The integrated system is evaluated along three axes. The main metric is end-to-end latency. It is defined as the sum of the three stage-level inference times:
+\[
+T_{\text{total}} = T_{\text{ASR}} + T_{\text{LLM}} + T_{\text{TTS}}.
+\]
+Each service reports its own latency, so the front end can construct a per-turn breakdown table directly from the server-side measurements.
+
+The second metric is LLM throughput. It is computed as
+\[
+\text{tok/s} = \frac{N_{\text{completion tokens}}}{T_{\text{LLM}}}.
+\]
+This value is derived from the token usage information returned by the LLM backend. It is used to characterize the efficiency of quantized inference on the target hardware.
+
+The third component is session-level logging. Per-turn metrics are accumulated in an in-memory session log. A report function computes average latency and related statistics over repeated queries. This avoids relying only on single-run measurements and makes the integrated benchmark more stable.
+
+The benchmark is designed around practical responsiveness for local voice interaction. In this project, an end-to-end latency below 5 seconds is treated as the target range for acceptable conversational response. Hardware acceleration is enabled whenever possible. Faster-Whisper uses CUDA with \texttt{float16} when available and falls back to CPU execution otherwise. The TTS backend is dispatched to the detected device. The LLM backend uses GPU offloading through \texttt{n\_gpu\_layers=-1}.
+
+\section{Overall System Evaluation}
+\label{sec:overall_eval}
+
+\subsection{Latency Breakdown}
+
+Table~\ref{tab:e2e_latency} summarises per-stage latency measured over 34 interactive turns logged during actual voice assistant sessions. The deployed configuration uses Faster-Whisper-Small (ASR), Qwen2.5-1.5B Q4\_K\_M (LLM, \texttt{max\_tokens=150}), and F5-TTS (TTS) on CUDA with sentence-level streaming enabled (see Section~\ref{sec:bonus}).
+
+\begin{table}[H]
+\centering
+\caption{Per-stage latency from 34 interactive session turns (CUDA, streaming pipeline).}
+\label{tab:e2e_latency}
+\begin{tabular}{lcccc}
+\toprule
+Stage & Mean (s) & Median (s) & Min (s) & Max (s) \\
+\midrule
+ASR                        & 0.63 & 0.34 & 0.15 & 4.37 \\
+LLM                        & 0.11 & 0.10 & 0.04 & 0.27 \\
+TTS (per sentence chunk)   & 0.94 & 0.80 & 0.47 & 3.18 \\
+\midrule
+Inference sum              & 1.80 & 1.61 & 0.77 & 4.98 \\
+\midrule
+LLM throughput (tok/s)     & ---  & 114  & 40   & 207  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Under sentence-level streaming the TTS column reflects per-chunk synthesis time rather than full-response synthesis, which explains the much lower mean (0.94 s) compared with the non-streaming quick-test baseline (3.51 s for a complete ~5 s audio response). The user hears the first synthesised sentence after approximately $T_{\text{ASR}} + T_{\text{LLM,first-sentence}} + T_{\text{TTS,one-chunk}}$, making the end-to-end inference sum of 1.80 s the effective perceived latency for the first audio chunk. All but one session turn fall within the $T_{\text{total}} < 5$ s conversational responsiveness target. The ASR outlier at 4.37 s corresponds to a longer multi-sentence utterance; removing it yields a mean of 0.40 s for ASR alone. LLM throughput at a median of 114 tok/s confirms efficient GPU-quantised inference.
+
+\section{Bonus Features}
+\label{sec:bonus}
+
+Three bonus features were implemented beyond the baseline voice interaction pipeline: a vibe-coded interactive front-end with model and language selection, an interrupt mechanism for the question-answering session, and streaming LLM output for reduced end-to-end translation delay.
+
+\subsection{Vibe-Coded Interactive User Interface}
+
+The front end was built entirely with Gradio and designed through iterative natural-language-driven development (``vibe coding''), where the interface layout and component wiring were refined through conversational prompts to an LLM rather than written from scratch. The resulting UI exposes the following controls:
+
+\begin{itemize}
+    \item \textbf{Automatic (VAD) mode}: the microphone stays open and voice activity detection triggers recording automatically; silence frames below an RMS threshold and recordings shorter than 0.5 s are discarded before being forwarded to ASR, suppressing hallucinated transcripts from ambient noise or inter-word gaps.
+    \item \textbf{Manual (push-to-talk) mode}: the user presses and holds the record button to capture audio and releases to submit; the full buffer is sent to ASR without filtering, providing more robust noise immunity and precise turn-taking control at the cost of an explicit button press per turn.
+\end{itemize}
+ 
+\begin{itemize}
+    \item \textbf{Voice cloning panel}: an audio upload component that accepts a reference WAV clip (3--10 s). The uploaded clip is forwarded to the F5-TTS service as the speaker-conditioning reference, enabling zero-shot voice cloning for each session without reloading model weights.
+    \item \textbf{Latency display}: per-turn ASR / LLM / TTS and total latency figures are shown alongside the synthesized audio, corresponding to the breakdown in Table~\ref{tab:e2e_latency}.
+\end{itemize}
+
+\subsection{Interrupt in Question-Answering}
+
+In a real conversational system the user may wish to stop an ongoing reply early---either because the answer is unsatisfactory, or because they want to clarify or add to the question before the response finishes. A dedicated \textbf{Stop / Interrupt} button was added to the Gradio interface. Pressing it at any point during generation or playback:
+
+\begin{enumerate}
+    \item Sends a cancellation signal to the LLM service via a \texttt{/cancel} endpoint, which sets a per-request abort flag checked inside the token-generation loop.
+    \item Signals the TTS service to discard any queued synthesis chunks via a matching \texttt{/cancel} call.
+    \item Resets the Gradio session state so the microphone input is immediately re-enabled and the user can speak a follow-up or corrected query.
+\end{enumerate}
+
+Without this mechanism, a 3--4 s audio reply must play in full before the next turn can begin. The interrupt path cuts the undesired portion of that delay, which in the worst case equals the full $T_{\text{total}} \approx 4$ s shown in Table~\ref{tab:e2e_latency}.
+
+\subsection{Streaming Input for Reduced End-to-End Translation Delay}
+
+In the baseline (non-streaming) pipeline the LLM generates a complete reply before the TTS stage is invoked, so the user waits for the full synthesis of the entire response. A non-streaming quick test measured $\approx$3.99 s total for short utterances ($\approx$3.5 s audio clip, TTS 3.51 s). For longer inputs the total latency scales with both ASR and TTS time: the streaming benchmark (Table~\ref{tab:streaming_latency}) uses audio ranging from 8 s to 44 s and responses of multiple sentences, where the non-streaming total would equal the full pipeline sum of 8--11 s before the user hears anything.
+
+Two optimizations were implemented to overlap generation and synthesis:
+
+\paragraph{Sentence-level streaming.}
+The LLM service was modified to return tokens in a server-sent-events (SSE) stream. The front-end orchestrator accumulates tokens and detects sentence boundaries (full stop, question mark, or exclamation mark followed by whitespace). As soon as the first complete sentence is available, it is dispatched to the TTS service in parallel with continued LLM generation for the remaining sentences. The TTS service synthesizes each sentence chunk independently and the client plays chunks in order. This pipeline overlap means the user hears the first sentence of the reply after approximately $T_{\text{ASR}} + T_{\text{LLM, first-sentence}} + T_{\text{TTS, one-sentence}}$ rather than waiting for the full synthesis of the entire response.
+
+\paragraph{Sentence-length reduction.}
+The LLM system prompt was tightened to instruct the model to respond in one to two concise sentences (\texttt{max\_tokens=80} for translation tasks, down from 150). Shorter sentences reduce per-chunk TTS latency because F5-TTS synthesis time scales roughly linearly with output audio length.
+
+\paragraph{Benchmark methodology.}
+The end-to-end streaming benchmark uses a WebSocket client that sends pre-recorded LibriSpeech audio to the full pipeline and records four timestamps per sample: (1) audio sent, (2) first LLM token received (TTFT), (3) first audio chunk received (TTFA), and (4) \texttt{done} message received (Total). Audio inputs are built by concatenating consecutive LibriSpeech utterances with a 0.5 s silence gap between them. Four length tiers were evaluated (20 samples each): \textit{xshort} ($\approx$0.8 s, single utterance trimmed), \textit{short} ($\approx$8 s, one utterance), \textit{medium} ($\approx$21 s, three concatenated), and \textit{long} ($\approx$44 s, six concatenated). The xshort tier was designed to approximate the brief 0.8--1.5 s utterances typical in real voice interaction sessions, where the browser's \texttt{trimSilence()} pre-processing produces sub-second effective audio after removing leading and trailing silence.
+
+\paragraph{Quantitative effect.}
+Table~\ref{tab:streaming_latency} reports measured latency across all four tiers. Time-to-first-audio (TTFA) is the primary metric: it captures perceived responsiveness from the user's perspective, as opposed to total wall time which includes all subsequent synthesis chunks.
+\begin{table}[H]
+\centering
+\caption{Streaming pipeline latency by input tier (20 samples each, mean $\pm$ std, CUDA).}
+\label{tab:streaming_latency}
+% 使用 resizebox 将表格缩放至页面宽度
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lccccccc}
+\toprule
+Input Tier & Avg.\ Audio (s) & ASR (s) & LLM (s) & TTS (s) & TTFT (ms) & TTFA (ms) & Total (s) \\
+\midrule
+XShort & \phantom{0}0.8 & $0.16\pm0.01$ & $2.2\pm0.4$ & $1.7\pm0.8$ & $2141\pm470$ & $2959\pm514$ & $\phantom{0}4.1\pm0.7$ \\
+Short  & \phantom{0}8.2 & $0.20\pm0.10$ & $2.8\pm0.7$ & $5.3\pm2.7$ & $2285\pm473$ & $3929\pm933$ & $\phantom{0}8.4\pm3.2$ \\
+Medium & 21.3           & $0.40\pm0.20$ & $3.0\pm0.4$ & $5.9\pm1.9$ & $2644\pm225$ & $4704\pm1335$ & $\phantom{0}9.4\pm2.3$ \\
+Long   & 44.1           & $0.90\pm0.30$ & $3.3\pm0.7$ & $6.7\pm2.6$ & $3159\pm341$ & $4569\pm909$ & $10.9\pm3.4$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+Several observations follow from the four-tier results. First, TTFT is dominated by LLM first-token latency ($\approx$2.1--3.2 s) across all tiers, which reflects the fixed cost of loading the first token from the quantized LLM (\texttt{llama-cpp-python}, Qwen2.5-1.5B Q4\_K\_M) rather than ASR time. ASR contributes only 0.16--0.90 s and scales with input duration as expected. Second, TTFA in the xshort tier ($\approx$2.96 s) is substantially lower than in the other tiers because shorter LLM responses produce shorter first sentences, which F5-TTS synthesizes faster ($\approx$1.7 s mean TTS per chunk vs.\ $\approx$5--7 s for longer tiers). Third, the gap between TTFA and Total illustrates the benefit of streaming: in the short tier, the user hears the first synthesized sentence at $\approx$3.93 s while the full reply finishes at $\approx$8.4 s --- without streaming, the user would wait the full 8.4 s before any audio plays, a 53\% reduction in perceived latency. For the xshort tier the gap is smaller ($\approx$1.1 s) because responses are shorter and fewer chunks are generated (mean 2.5 chunks vs.\ 7.8 for short). LLM throughput across all tiers was 14--42 tok/s (median), with lower values in the xshort tier reflecting brief responses where the fixed per-call overhead dominates.
+
+\section{Discussion}
+
+The benchmark results reveal three main trade-offs.
+
+For ASR, Moonshine-Base and Faster-Whisper-Small are close in transcription quality on LibriSpeech test-clean (0.59 pp WER gap), but differ more noticeably in throughput: Faster-Whisper-Small reaches RTFx $= 29.14$ versus 24.64 for Moonshine-Base. Faster-Whisper-Large-V3-Turbo achieves 6.83\% WER, confirming a large quality headroom, but at the cost of a heavier model and lower RTFx (20.93). Faster-Whisper-Small was selected for integration because it offers the best throughput among the tested models while maintaining near-identical accuracy to Moonshine-Base on this benchmark.
+
+For LLM, Qwen2.5-3B achieves higher MMLU accuracy (24.4\% vs.\ 23.3\%) and shorter runtime (54.6 s vs.\ 68.8 s) than the larger Llama-3.2-3B under the same quantization. The context-length study confirms that \texttt{n\_ctx=2048} is sufficient for short conversational prompts without accuracy or latency penalty. In the integrated pipeline, Qwen2.5-1.5B achieves 85--117 tok/s on CUDA with \texttt{max\_tokens=150}, contributing only $\approx$0.3 s to end-to-end latency.
+
+For TTS, Kokoro achieves the best RT-WER (5.52\%) and lowest latency (0.15 s/sample) but lacks speaker conditioning. Among the two reference-conditioned models, F5-TTS outperforms GPT-SoVITS on all metrics: RT-WER 18.77\% vs.\ 46.49\%, speaker similarity 0.90 vs.\ 0.83, and latency 1.30 s/sample vs.\ 3.75 s/sample. F5-TTS was selected for the integrated pipeline as it combines acceptable intelligibility with zero-shot voice cloning, a requirement of the project. End-to-end latency of $\approx$4 s is dominated by TTS; this bottleneck was addressed through sentence-level streaming (see Section~\ref{sec:bonus}), which reduced time-to-first-audio by $\approx$53\% in the short-input tier.
+
+\section{Future Work}
+
+The current system completes the core pipeline and the three bonus features described above. Several directions remain open for future development.
+
+\subsection{Conversational Memory System}
+
+At present each turn is processed independently. The LLM context window is reset between turns, so the assistant has no recollection of earlier exchanges. A persistent memory layer would allow genuine multi-turn dialogue. The planned approach is to maintain a rolling conversation buffer that serialises prior (user, assistant) pairs into the LLM system prompt up to a configurable token budget (e.g., the most recent 4--8 turns within 1024 tokens). For longer sessions, a lightweight retrieval step---such as embedding-based nearest-neighbour lookup over a local vector store---could surface relevant earlier exchanges without exceeding the model's context limit. This would transform the current single-turn question-answering assistant into a coherent conversational agent capable of referencing context across an entire session.
+
+\subsection{Extended Prompt Engineering}
+
+The prompt engineering benchmark evaluated three strategies (zero-shot, few-shot, and chain-of-thought); role prompting was designed but not yet executed. Several directions remain unexplored. First, the few-shot results could be extended with domain-adaptive example selection, where demonstration samples are chosen based on semantic similarity to the current query rather than taken from a fixed prefix. Second, structured output prompts could enforce JSON-formatted replies, which would make post-processing more robust and allow richer latency--accuracy trade-off studies. Third, a persona-level system prompt---combining the role prefix from the role-prompting strategy with a fixed conversational tone instruction---could improve naturalness of synthesized speech by reducing the occurrence of list-style or bullet-point outputs that read poorly when converted to audio.
+
+\section{Conclusion}
+
+This report presents the design, standalone benchmark, and integration of an end-to-end voice interaction system. Faster-Whisper-Small and Qwen2.5-1.5B-Instruct were selected as the ASR and LLM components respectively: Faster-Whisper-Small achieved the highest RTFx (29.14) among the three ASR candidates with only a 0.59 pp WER difference from Moonshine-Base, while the large-v3-turbo model confirmed a 9 pp quality headroom at the cost of a heavier footprint. F5-TTS was selected for the TTS stage based on its combination of low RT-WER (18.77\%), high speaker similarity (0.90), and competitive latency (1.30 s/sample) among the reference-conditioned models. The integrated pipeline meets the 5 s end-to-end latency target on a single consumer GPU, with the TTS stage identified as the primary bottleneck. Prompt engineering results show that few-shot prompting offers the best accuracy--latency trade-off for deployment, while CoT achieves the highest accuracy (70.4\% for Qwen2.5-3B) but is impractical for real-time voice due to truncation issues and multi-second generation time. Sentence-level streaming reduces time-to-first-audio by $\approx$53\% compared to the non-streaming baseline, significantly improving perceived responsiveness.
+
+\appendix
+
+\section{Project Structure}
+
+The full source code is available at \url{https://github.com/zestcode/Voice-Assistant-Project}.
+The repository layout on the development machine is shown below.
+
+\begin{verbatim}
+Voice-Assistant-Project/
+|
+|-- app/                          # Microservices and front end
+|   |-- asr_server.py             # FastAPI ASR service  (port 8001)
+|   |-- llm_server.py             # FastAPI LLM service  (port 8002)
+|   |-- tts_server.py             # FastAPI TTS service  (port 8003)
+|   |-- orchestrator.py           # Pipeline coordinator (WebSocket + HTTP)
+|   |-- voice_assistant.py        # Gradio UI (model selector, voice clone, interrupt)
+|   |-- static/
+|   |   \-- index.html            # Lightweight web front end (alternative to Gradio)
+|   |-- start_servers.bat         # One-click Windows launcher for all three services
+|   |-- requirements_app.txt      # Runtime dependencies for the app environment
+|   |-- README_asr.md             # ASR service usage notes
+|   |-- README_llm.md             # LLM service usage notes
+|   |-- README_tts.md             # TTS service usage notes
+|   \-- README_ui.md              # Gradio UI usage notes
+|
+|-- scripts/                      # Standalone benchmark and utility scripts
+|   |-- config.py                 # Shared paths and hyperparameter constants
+|   |-- benchmark_asr_moonshine.py
+|   |-- benchmark_asr_whisper.py
+|   |-- benchmark_asr_whisper_large.py
+|   |-- benchmark_llm_qwen.py
+|   |-- benchmark_llm_llama.py
+|   |-- benchmark_llm_prompt_strategies.py
+|   |-- benchmark_tts_kokoro.py
+|   |-- benchmark_tts_gptsovits.py
+|   |-- benchmark_tts_f5.py
+|   |-- benchmark_e2e_streaming.py # End-to-end streaming latency benchmark
+|   |-- prepare_llm_benchmark.py   # Download and cache MMLU subsets
+|   |-- prepare_ref_audio.py       # Prepare reference WAV for TTS conditioning
+|   |-- export_bench_samples.py    # Export benchmark samples to disk
+|   |-- save_qwen15b_results.py    # Persist Qwen-1.5B result snapshots
+|   |-- summarize.py               # Aggregate CSV results into summary tables
+|   \-- run_all.py                 # Run all benchmarks sequentially
+|
+|-- notebooks/
+|   \-- EECE7398_HW2_benchmark.ipynb  # Interactive exploration notebook
+|
+|-- tests/                        # Unit / smoke tests for each service
+|   |-- test_asr.py
+|   |-- test_llm.py
+|   \-- test_tts.py
+|
+|-- models/                       # Local model weight storage (not tracked by git)
+|   |-- asr/
+|   |   |-- faster-whisper-small/ # CTranslate2 float16 weights
+|   |   \-- moonshine-base/       # ONNX weights
+|   |-- llm/
+|   |   |-- qwen2.5-1.5b-instruct-q4_k_m.gguf
+|   |   |-- llama-3.2-3b-instruct-q4_k_m.gguf
+|   |   \-- qwen2.5-3b-instruct-q4_k_m.gguf
+|   \-- tts/
+|       |-- kokoro/
+|       |-- gpt-sovits/
+|       \-- f5-tts/
+|
+|-- data/
+|   |-- benchmarks/
+|   |   |-- asr/  librispeech_clean_test (HuggingFace Arrow cache)
+|   |   |-- llm/  mmlu_* subsets (15 subjects, HuggingFace Arrow cache)
+|   |   \-- tts/  emergenttts_eval (HuggingFace Arrow cache)
+|   |-- ref_voice/
+|   |   \-- ref.wav               # Speaker reference clip for F5-TTS / GPT-SoVITS
+|   \-- test_audio/
+|       \-- sample.mp3
+|
+|-- outputs/
+|   \-- tables/                   # CSV and JSON benchmark results
+|       |-- asr_moonshine_benchmark.csv
+|       |-- asr_whisper_benchmark.csv
+|       |-- asr_whisper_large_benchmark.csv
+|       |-- llm_benchmark.csv
+|       |-- llm_qwen_benchmark.csv
+|       |-- llm_llama_benchmark.csv
+|       |-- llm_prompt_strategies.csv
+|       |-- llm_prompt_examples.json
+|       |-- tts_benchmark.csv
+|       |-- tts_f5_benchmark.csv
+|       |-- tts_gptsovits_benchmark.csv
+|       |-- e2e_streaming_benchmark.csv
+|       |-- e2e_streaming_summary.csv
+|       |-- quick_test_asr.json
+|       |-- quick_test_llm.json
+|       |-- quick_test_tts.json
+|       \-- session_log.json
+|
+|-- diagrams.tex                  # TikZ source for architecture and data-flow figures
+|-- run.py                        # Top-level entry point (starts all services)
+\-- voice_project_report_outline_v3.tex
+\end{verbatim}
+
+\section{Implementation Files}
+
+Table~\ref{tab:impl_files} summarises the purpose of each key source file.
+
+\begin{table}[H]
+\centering
+\caption{Key implementation files and their roles.}
+\label{tab:impl_files}
+\begin{tabular}{lp{9cm}}
+\toprule
+File & Description \\
+\midrule
+\texttt{app/asr\_server.py}      & FastAPI WebSocket server; loads Faster-Whisper-Small, applies RMS silence filter, returns transcript and latency. \\
+\texttt{app/llm\_server.py}      & FastAPI WebSocket server; loads Qwen2.5-1.5B via \texttt{llama-cpp-python}, streams tokens, supports \texttt{/cancel}. \\
+\texttt{app/tts\_server.py}      & FastAPI HTTP server; loads F5-TTS, synthesises per-sentence WAV chunks from reference clip. \\
+\texttt{app/orchestrator.py}     & Coordinates ASR$\to$LLM$\to$TTS pipeline; manages WebSocket connections and sentence-boundary detection. \\
+\texttt{app/voice\_assistant.py} & Gradio \texttt{gr.Blocks} UI: model selector, language selector, voice-clone upload, interrupt button, latency display. \\
+\texttt{scripts/config.py}       & Central configuration: model paths, service ports, hyperparameters. \\
+\texttt{scripts/benchmark\_e2e\_streaming.py} & Measures TTFT and TTFA across short / medium / long audio tiers. \\
+\texttt{scripts/run\_all.py}     & Runs all benchmark scripts sequentially and writes results to \texttt{outputs/tables/}. \\
+\texttt{tests/test\_asr.py}      & Smoke test: sends a WAV sample to the ASR service and checks transcript format. \\
+\texttt{tests/test\_llm.py}      & Smoke test: sends a text prompt to the LLM service and checks streaming response. \\
+\texttt{tests/test\_tts.py}      & Smoke test: sends a text string to the TTS service and checks WAV response. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Reproducibility Notes}
+
+\subsection*{Hardware}
+\begin{itemize}
+  \item GPU: NVIDIA RTX series, 12 GB VRAM
+  \item OS: Windows 11, CUDA Toolkit 13.0
+  \item Python: 3.11 (Conda environments: \texttt{moonshine}, \texttt{llm}, \texttt{gptsovits})
+\end{itemize}
+
+\subsection*{Environment Setup}
+\begin{enumerate}
+  \item Create and activate each Conda environment using the \texttt{requirements\_app.txt} in \texttt{app/}.
+  \item Build \texttt{llama-cpp-python} from source with CUDA:\\
+        \texttt{CMAKE\_ARGS="-DGGML\_CUDA=on" pip install llama-cpp-python -{}-no-binary :all:}\\
+        A pre-built wheel for CUDA 13.0 / Blackwell is included in the repository root:\\
+        \texttt{llama\_cpp\_python-0.3.16+cuda13.0.sm100.blackwell-cp311-cp311-win\_amd64.whl}
+  \item Place model weights under \texttt{models/} following the directory layout above.
+  \item Run \texttt{app/start\_servers.bat} to launch all three microservices, then open \texttt{app/voice\_assistant.py} in the Gradio environment.
+\end{enumerate}
+
+\subsection*{Benchmark Reproduction}
+Run \texttt{python scripts/run\_all.py} to reproduce all module-level benchmarks. Results are written to \texttt{outputs/tables/}. The end-to-end streaming benchmark requires all three services to be running: \texttt{python scripts/benchmark\_e2e\_streaming.py}.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

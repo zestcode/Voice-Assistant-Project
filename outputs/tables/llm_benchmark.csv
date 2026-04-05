@@ -1,0 +1,3 @@
+,Overall Acc,college_computer_science,college_physics,high_school_world_history,high_school_biology,professional_medicine,Time(s)
+Qwen2.5-1.5B,0.244,0.29,0.196,0.316,0.229,0.199,54.596
+Llama-3.2-3B,0.233,0.28,0.216,0.274,0.216,0.206,68.772

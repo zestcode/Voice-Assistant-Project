@@ -1,0 +1,24 @@
+[
+  {
+    "timestamp": "2026-04-04T13:15:04.520845",
+    "wall_s": 3.6,
+    "model": "faster-whisper-small",
+    "device": "cuda",
+    "latency_s": 0.206,
+    "rtfx": 17.0,
+    "transcript": "Concord returned to its place amidst the tents.",
+    "expected": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS",
+    "match": true
+  },
+  {
+    "timestamp": "2026-04-04T13:17:41.028040",
+    "wall_s": 3.3,
+    "model": "faster-whisper-small",
+    "device": "cuda",
+    "latency_s": 0.188,
+    "rtfx": 18.6,
+    "transcript": "Concord returned to its place amidst the tents.",
+    "expected": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS",
+    "match": true
+  }
+]

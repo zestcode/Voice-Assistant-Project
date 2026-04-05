@@ -1,0 +1,47 @@
+# ── Model weights (too large for git) ────────────────────────────────────────
+models/asr/faster-whisper-small/
+models/asr/moonshine-base/
+models/llm/
+models/tts/
+*.gguf
+*.bin
+*.pt
+*.safetensors
+*.onnx
+
+# ── Benchmark datasets (downloaded via HuggingFace) ──────────────────────────
+data/benchmarks/
+
+# ── Audio files ───────────────────────────────────────────────────────────────
+data/ref_voice/
+data/test_audio/
+outputs/audio_cache/
+outputs/bench_samples/
+*.wav
+*.mp3
+*.flac
+
+# ── Third-party repo ──────────────────────────────────────────────────────────
+code/GPT-SoVITS/
+
+# ── Compiled binaries / wheels ────────────────────────────────────────────────
+*.whl
+
+# ── One-time patch scripts (no longer needed) ────────────────────────────────
+scripts/patch_*.py
+
+# ── Python cache ─────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.cache/
+
+# ── HuggingFace cache inside model dirs ──────────────────────────────────────
+**/.cache/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+.env
+*.log
+{const
+test.md
+test.py

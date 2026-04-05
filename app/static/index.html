@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice AI Assistant</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f1117; color: #e0e0e0; min-height: 100vh; }
+
+  header { padding: 20px 32px; border-bottom: 1px solid #2a2a3a; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 1.2rem; font-weight: 600; }
+  .env-tags { display: flex; gap: 6px; margin-left: auto; }
+  .tag { font-size: 0.7rem; background: #1e2030; border: 1px solid #3a3a5a; padding: 3px 8px; border-radius: 4px; color: #8888bb; }
+
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 24px 32px; max-width: 1200px; margin: 0 auto; }
+
+  .panel { background: #1a1b26; border: 1px solid #2a2a3a; border-radius: 12px; padding: 20px; }
+  .panel h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: #6666aa; margin-bottom: 14px; }
+
+  #recordBtn {
+    width: 100%; padding: 16px; border-radius: 10px; border: 2px solid #4444aa;
+    background: #1e1e3a; color: #aaaaff; font-size: 1rem; cursor: pointer;
+    transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 10px;
+  }
+  #recordBtn:hover { background: #252545; }
+  #recordBtn.recording { background: #3a1a1a; border-color: #aa4444; color: #ffaaaa; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.7 } }
+
+  #interruptBtn {
+    display: none; width: 100%; margin-top: 10px; padding: 12px;
+    border-radius: 10px; border: 2px solid #aa4444; background: #2a1a1a;
+    color: #ffaaaa; font-size: 0.9rem; cursor: pointer; transition: all 0.2s;
+  }
+  #interruptBtn:hover { background: #3a2020; }
+
+  .waveform { height: 48px; background: #0f1117; border-radius: 8px; margin: 12px 0; overflow: hidden; }
+  canvas { width: 100%; height: 100%; }
+
+  .status-bar { font-size: 0.8rem; color: #666; margin-top: 8px; min-height: 20px; }
+  .status-bar.active { color: #88aaff; }
+  .status-bar.error  { color: #ff8888; }
+  .status-bar.playing { color: #88ffaa; }
+
+  .vad-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.75rem; color: #555; }
+  .vad-dot { width: 6px; height: 6px; border-radius: 50%; background: #333; flex-shrink: 0; }
+  .vad-dot.active { background: #88ff88; }
+
+  #autoBtn {
+    width: 100%; margin-top: 8px; padding: 10px; border-radius: 8px;
+    border: 1px solid #3a3a5a; background: #1e2030; color: #8888bb;
+    font-size: 0.82rem; cursor: pointer; transition: all 0.2s;
+  }
+  #autoBtn.on { border-color: #44aa66; background: #1a2a1a; color: #88ffaa; }
+
+  .server-grid { display: flex; flex-direction: column; gap: 8px; }
+  .server-row { display: flex; align-items: center; justify-content: space-between;
+    background: #0f1117; border-radius: 8px; padding: 8px 12px; font-size: 0.82rem; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; flex-shrink: 0; }
+  .dot.online { background: #44bb88; }
+  .dot.offline { background: #bb4444; }
+
+  .metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .metric { background: #0f1117; border-radius: 8px; padding: 12px; text-align: center; }
+  .metric .val { font-size: 1.5rem; font-weight: 700; color: #aaaaff; }
+  .metric .lbl { font-size: 0.7rem; color: #666; margin-top: 4px; }
+
+  .text-display { background: #0f1117; border-radius: 8px; padding: 14px; min-height: 80px;
+    font-size: 0.9rem; line-height: 1.6; color: #ccccee; white-space: pre-wrap; word-break: break-word; }
+  .text-display.placeholder { color: #444; font-style: italic; }
+
+  .upload-row { display: flex; gap: 10px; align-items: flex-start; }
+  .file-btn { flex-shrink: 0; padding: 8px 14px; background: #1e2030; border: 1px solid #3a3a5a;
+    border-radius: 8px; color: #8888bb; font-size: 0.8rem; cursor: pointer; }
+  .file-btn:hover { background: #252545; }
+  #refLabel { font-size: 0.75rem; color: #555; margin-top: 6px; }
+  #refText { width: 100%; margin-top: 8px; padding: 8px 10px; background: #0f1117;
+    border: 1px solid #2a2a3a; border-radius: 8px; color: #ccc; font-size: 0.82rem;
+    resize: vertical; min-height: 50px; }
+
+  #reportBtn { padding: 8px 16px; background: #1e2030; border: 1px solid #3a3a5a;
+    border-radius: 8px; color: #8888bb; font-size: 0.82rem; cursor: pointer; margin-top: 8px; }
+  #reportBtn:hover { background: #252545; }
+  #reportOut { margin-top: 10px; font-size: 0.78rem; color: #8888aa; white-space: pre-wrap;
+    background: #0f1117; border-radius: 8px; padding: 12px; max-height: 160px; overflow-y: auto; display: none; }
+
+  .ws-badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; margin-left: 8px;
+    background: #1a2a1a; border: 1px solid #2a4a2a; color: #44aa44; }
+  .ws-badge.disconnected { background: #2a1a1a; border-color: #4a2a2a; color: #aa4444; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8888ff" stroke-width="2">
+    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+  </svg>
+  <h1>Voice AI Assistant</h1>
+  <span class="ws-badge disconnected" id="wsBadge">WS ✗</span>
+  <div class="env-tags">
+    <span class="tag">large-v3-turbo · ASR</span>
+    <span class="tag">llm · Qwen2.5</span>
+    <span class="tag">gptsovits · F5-TTS</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT COLUMN -->
+  <div style="display:flex;flex-direction:column;gap:20px;">
+
+    <!-- Record -->
+    <div class="panel">
+      <h2>Input</h2>
+      <button id="recordBtn" onclick="toggleRecord()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+        <span id="recordLabel">Click to record</span>
+      </button>
+      <button id="interruptBtn" onclick="sendInterrupt()">
+        ⏹ Interrupt
+      </button>
+      <button id="autoBtn" onclick="toggleAutoMode()">🎙 Auto mode: OFF</button>
+      <div class="waveform"><canvas id="waveCanvas"></canvas></div>
+      <div class="status-bar" id="statusBar">Initializing…</div>
+      <div class="vad-row">
+        <div class="vad-dot" id="vadDot"></div>
+        <span id="vadLabel">VAD: initializing</span>
+      </div>
+    </div>
+
+    <!-- Server status -->
+    <div class="panel">
+      <h2>Servers <button onclick="checkServers()" style="font-size:0.7rem;padding:2px 8px;background:#1e2030;border:1px solid #3a3a5a;border-radius:4px;color:#8888bb;cursor:pointer;margin-left:8px;">↻</button></h2>
+      <div class="server-grid">
+        <div class="server-row"><span>ASR · :8001</span><div class="dot" id="dot-ASR"></div></div>
+        <div class="server-row"><span>LLM · :8002</span><div class="dot" id="dot-LLM"></div></div>
+        <div class="server-row"><span>TTS · :8003</span><div class="dot" id="dot-TTS"></div></div>
+      </div>
+    </div>
+
+    <!-- Voice clone -->
+    <div class="panel">
+      <h2>Voice Clone (optional)</h2>
+      <div class="upload-row">
+        <label class="file-btn">Upload WAV <input type="file" id="refFile" accept=".wav,audio/*" style="display:none" onchange="onRefFile(this)"></label>
+        <div><div id="refLabel">Default: ref.wav</div></div>
+      </div>
+      <textarea id="refText" placeholder="Transcript of reference audio (optional)…"></textarea>
+    </div>
+
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div style="display:flex;flex-direction:column;gap:20px;">
+
+    <!-- Transcript -->
+    <div class="panel">
+      <h2>ASR Transcript</h2>
+      <div class="text-display placeholder" id="transcriptBox">What you say will appear here…</div>
+    </div>
+
+    <!-- Response -->
+    <div class="panel">
+      <h2>LLM Response <span id="streamingDot" style="display:none;color:#88aaff;font-size:0.8rem;">● streaming</span></h2>
+      <div class="text-display placeholder" id="responseBox">Assistant reply will appear here…</div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="panel">
+      <h2>Latency</h2>
+      <div class="metrics-grid">
+        <div class="metric"><div class="val" id="m-asr">—</div><div class="lbl">ASR (s)</div></div>
+        <div class="metric"><div class="val" id="m-llm">—</div><div class="lbl">LLM (s)</div></div>
+        <div class="metric"><div class="val" id="m-tts">—</div><div class="lbl">TTS (s)</div></div>
+        <div class="metric"><div class="val" id="m-total">—</div><div class="lbl">Total (s)</div></div>
+      </div>
+      <div style="margin-top:10px;font-size:0.78rem;color:#555;" id="tokRate"></div>
+    </div>
+
+    <!-- Report -->
+    <div class="panel">
+      <h2>Report</h2>
+      <button id="reportBtn" onclick="fetchReport()">Generate session report</button>
+      <pre id="reportOut"></pre>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let appState    = 'idle';   // idle | recording | processing | playing
+let mediaRecorder = null;
+let audioChunks   = [];
+let isRecording   = false;
+let refFile       = null;
+
+// ── Mic / VAD (persistent stream, opened once) ────────────────────────────────
+let vadStream   = null;
+let audioCtx    = null;
+let analyser    = null;
+let animFrame   = null;
+
+// VAD thresholds
+const VAD_SPEECH_ON     = 2.0;  // smoothed RMS to consider "speaking"
+const VAD_SPEECH_OFF    = 0.5;  // smoothed RMS below this = silence (hysteresis)
+const VAD_START_HOLD_MS = 200;  // speech must last this long to start recording
+const VAD_STOP_HOLD_MS  = 900;  // silence must last this long to stop recording
+const VAD_INTERRUPT_MS  = 400;  // speech during playback triggers interrupt after this
+
+// Auto-mode state
+let autoMode    = false;
+let vadEnergy   = 0;        // raw per-frame RMS
+let vadSmooth   = 0;        // exponential moving average of RMS
+let _vadSpeaking    = false;    // hysteresis state
+let _vadSpeechStart = 0;
+let _vadSilStart    = 0;
+let _vadIntStart    = 0;
+
+async function initMic() {
+  try {
+    vadStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,   // removes TTS playback from mic input
+        noiseSuppression: true,
+        autoGainControl:  false,  // keep off — AGC causes pumping artefacts
+      },
+      video: false,
+    });
+    audioCtx  = new AudioContext();
+    analyser  = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    audioCtx.createMediaStreamSource(vadStream).connect(analyser);
+    animateWave();
+    document.getElementById('vadLabel').textContent = 'VAD: ready';
+    setStatus('Ready — click to record', '');
+  } catch(e) {
+    document.getElementById('vadLabel').textContent = 'VAD: no mic';
+    setStatus('Microphone unavailable: ' + e.message, 'error');
+  }
+}
+
+function toggleAutoMode() {
+  autoMode = !autoMode;
+  const btn = document.getElementById('autoBtn');
+  btn.textContent = `🎙 Auto mode: ${autoMode ? 'ON' : 'OFF'}`;
+  btn.classList.toggle('on', autoMode);
+  if (autoMode) {
+    setStatus('Auto mode — speak to start', 'active');
+  } else {
+    // If currently recording due to auto-mode, stop
+    if (isRecording) stopRecord();
+    setStatus('Ready — click to record', '');
+  }
+}
+
+// ── Waveform + VAD check ──────────────────────────────────────────────────────
+const canvas = document.getElementById('waveCanvas');
+const ctx2d  = canvas.getContext('2d');
+
+function drawWave(dataArray) {
+  canvas.width  = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+  ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+  ctx2d.strokeStyle = isRecording ? '#ff6666' : '#4444aa';
+  ctx2d.lineWidth   = 1.5;
+  ctx2d.beginPath();
+  const sliceW = canvas.width / dataArray.length;
+  dataArray.forEach((v, i) => {
+    const x = i * sliceW;
+    const y = (v / 255) * canvas.height;
+    i === 0 ? ctx2d.moveTo(x, y) : ctx2d.lineTo(x, y);
+  });
+  ctx2d.stroke();
+}
+
+function animateWave() {
+  if (!analyser) return;
+  const buf = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteTimeDomainData(buf);
+  drawWave(buf);
+
+  // Compute RMS energy then smooth with EMA (α=0.15 → ~6-frame lag at 60fps)
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) { const v = buf[i] - 128; sum += v * v; }
+  vadEnergy  = Math.sqrt(sum / buf.length);
+  vadSmooth  = 0.4 * vadEnergy + 0.6 * vadSmooth;
+
+  // Hysteresis: need higher threshold to enter speaking, lower to exit
+  if (!_vadSpeaking && vadSmooth > VAD_SPEECH_ON)  _vadSpeaking = true;
+  if ( _vadSpeaking && vadSmooth < VAD_SPEECH_OFF) _vadSpeaking = false;
+  const speaking = _vadSpeaking;
+  document.getElementById('vadDot').classList.toggle('active', speaking);
+  const now = performance.now();
+
+  // ── State machine ──────────────────────────────────────────────────────────
+
+  if (appState === 'playing') {
+    // During playback: sustained speech → interrupt
+    if (speaking) {
+      if (_vadIntStart === 0) _vadIntStart = now;
+      if (now - _vadIntStart >= VAD_INTERRUPT_MS) {
+        _vadIntStart = 0;
+        sendInterrupt();
+      }
+    } else {
+      _vadIntStart = 0;
+    }
+
+  } else if (appState === 'idle' && autoMode) {
+    // Auto mode idle: sustained speech → start recording
+    if (speaking) {
+      if (_vadSpeechStart === 0) _vadSpeechStart = now;
+      if (now - _vadSpeechStart >= VAD_START_HOLD_MS) {
+        _vadSpeechStart = 0;
+        _vadSilStart    = 0;
+        startRecord();
+      }
+    } else {
+      _vadSpeechStart = 0;
+    }
+
+  } else if (appState === 'recording' && autoMode) {
+    // Auto mode recording: sustained silence → stop and send
+    if (!speaking) {
+      if (_vadSilStart === 0) _vadSilStart = now;
+      if (now - _vadSilStart >= VAD_STOP_HOLD_MS) {
+        _vadSilStart    = 0;
+        _vadSpeechStart = 0;
+        stopRecord();
+      }
+    } else {
+      _vadSilStart = 0;
+    }
+
+  } else {
+    // Manual mode or processing: reset all timers
+    _vadSpeechStart = 0;
+    _vadSilStart    = 0;
+    _vadIntStart    = 0;
+  }
+
+  animFrame = requestAnimationFrame(animateWave);
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+let ws = null;
+let wsReconnectTimer = null;
+
+function connectWS() {
+  if (ws && ws.readyState <= WebSocket.OPEN) return;
+  ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('wsBadge').textContent = 'WS ✓';
+    document.getElementById('wsBadge').classList.remove('disconnected');
+  };
+
+  ws.onclose = () => {
+    document.getElementById('wsBadge').textContent = 'WS ✗';
+    document.getElementById('wsBadge').classList.add('disconnected');
+    // Reconnect after 2s
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = setTimeout(connectWS, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    switch (msg.type) {
+      case 'transcript':
+        updateTranscript(msg.text);
+        document.getElementById('m-asr').textContent = msg.asr_s;
+        setState('processing');
+        break;
+      case 'token':
+        appendToken(msg.text);
+        break;
+      case 'audio_chunk':
+        enqueueChunk(msg.idx, msg.data);
+        break;
+      case 'done':
+        document.getElementById('streamingDot').style.display = 'none';
+        if (msg.metrics) updateMetrics(msg.metrics);
+        pipelineDone = true;   // unlock idle transition in playNext
+        drainQueue();          // if audio queue already empty, go idle immediately
+        break;
+      case 'interrupted':
+        resetAudioQueue();
+        setState('idle');
+        setStatus('Interrupted', '');
+        break;
+      case 'error':
+        setStatus('Error: ' + msg.msg, 'error');
+        setState('idle');
+        break;
+    }
+  };
+}
+
+// ── Recording ─────────────────────────────────────────────────────────────────
+async function toggleRecord() {
+  if (isRecording) { stopRecord(); return; }
+  if (!vadStream)  { await initMic(); }
+  startRecord();
+}
+
+function startRecord() {
+  if (!vadStream) { setStatus('No microphone', 'error'); return; }
+  audioChunks   = [];
+  mediaRecorder = new MediaRecorder(vadStream, { mimeType: 'audio/webm' });
+  mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+  mediaRecorder.onstop = processAudio;
+  mediaRecorder.start();
+
+  isRecording = true;
+  document.getElementById('recordBtn').classList.add('recording');
+  document.getElementById('recordLabel').textContent = 'Recording… click to stop';
+  setState('recording');
+}
+
+function stopRecord() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  isRecording = false;
+  document.getElementById('recordBtn').classList.remove('recording');
+  document.getElementById('recordLabel').textContent = 'Click to record';
+  setState('processing');
+  setStatus('Processing…', 'active');
+}
+
+// ── Audio conversion (browser-side: webm → 16kHz mono WAV) ───────────────────
+function audioBufferToWav(buffer) {
+  const sr      = buffer.sampleRate;
+  const samples = buffer.getChannelData(0);
+  const int16   = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  const dataLen = int16.byteLength;
+  const ab      = new ArrayBuffer(44 + dataLen);
+  const v       = new DataView(ab);
+  const ws2     = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  ws2(0,'RIFF'); v.setUint32(4, 36 + dataLen, true);
+  ws2(8,'WAVE'); ws2(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true);
+  v.setUint16(32,2,true);  v.setUint16(34,16,true);
+  ws2(36,'data'); v.setUint32(40,dataLen,true);
+  new Uint8Array(ab, 44).set(new Uint8Array(int16.buffer));
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
+// Trim leading and trailing silence from an AudioBuffer
+// silenceThreshold: 0-1 float amplitude, padMs: keep N ms of silence around speech
+function trimSilence(audioBuf, silenceThreshold = 0.01, padMs = 150) {
+  const samples = audioBuf.getChannelData(0);
+  const sr      = audioBuf.sampleRate;
+  const padSamples = Math.floor(padMs * sr / 1000);
+
+  let start = 0;
+  for (let i = 0; i < samples.length; i++) {
+    if (Math.abs(samples[i]) > silenceThreshold) { start = Math.max(0, i - padSamples); break; }
+  }
+  let end = samples.length;
+  for (let i = samples.length - 1; i >= 0; i--) {
+    if (Math.abs(samples[i]) > silenceThreshold) { end = Math.min(samples.length, i + padSamples); break; }
+  }
+
+  // Minimum 0.5s to avoid sending near-empty audio
+  const minSamples = Math.floor(0.5 * sr);
+  if (end - start < minSamples) return audioBuf;   // don't trim if too short
+
+  const ctx    = new OfflineAudioContext(1, end - start, sr);
+  const newBuf = ctx.createBuffer(1, end - start, sr);
+  newBuf.getChannelData(0).set(samples.subarray(start, end));
+  return newBuf;
+}
+
+async function blobToWav16k(blob) {
+  const arrayBuf  = await blob.arrayBuffer();
+  const decodeCtx = new AudioContext();
+  const audioBuf  = await decodeCtx.decodeAudioData(arrayBuf);
+  await decodeCtx.close();
+
+  const targetSR  = 16000;
+  const numFrames = Math.round(audioBuf.duration * targetSR);
+  const offCtx    = new OfflineAudioContext(1, numFrames, targetSR);
+  const src       = offCtx.createBufferSource();
+  src.buffer      = audioBuf;
+  src.connect(offCtx.destination);
+  src.start(0);
+  const resampled = await offCtx.startRendering();
+
+  // Trim silence — especially important for auto-mode where VAD adds padding
+  const trimmed = trimSilence(resampled, 0.008, 150);
+  return audioBufferToWav(trimmed);
+}
+
+async function processAudio() {
+  const rawBlob = new Blob(audioChunks, { type: 'audio/webm' });
+  let wavBlob;
+  try {
+    wavBlob = await blobToWav16k(rawBlob);
+  } catch(e) {
+    setStatus('Audio decode failed: ' + e.message, 'error');
+    setState('idle');
+    return;
+  }
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    setStatus('WebSocket not connected — retrying…', 'error');
+    connectWS();
+    setState('idle');
+    return;
+  }
+
+  // Reset UI for new pipeline
+  resetAudioQueue();
+  const rb = document.getElementById('responseBox');
+  rb.textContent = '';
+  rb.classList.remove('placeholder');
+  document.getElementById('streamingDot').style.display = 'inline';
+
+  // Encode WAV as base64 — chunked to avoid call-stack overflow on large buffers
+  function arrayBufToB64(ab) {
+    const bytes = new Uint8Array(ab);
+    const CHUNK = 0x8000;  // 32KB chunks
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(binary);
+  }
+
+  const arrayBuf = await wavBlob.arrayBuffer();
+  const b64 = arrayBufToB64(arrayBuf);
+
+  // Optionally encode ref audio
+  let refB64 = null;
+  if (refFile) {
+    const refBuf = await refFile.arrayBuffer();
+    refB64 = arrayBufToB64(refBuf);
+  }
+
+  ws.send(JSON.stringify({
+    type:      'audio',
+    data:      b64,
+    ref_audio: refB64,
+    ref_text:  document.getElementById('refText').value.trim(),
+  }));
+}
+
+// ── AudioContext queue ────────────────────────────────────────────────────────
+let audioQueue      = {};    // idx → ArrayBuffer
+let nextPlayIdx     = 0;
+let isPlaying       = false;
+let currentAudCtx   = null;
+let currentSource   = null;
+let pipelineDone    = false; // set true when {type:"done"} arrives
+
+function resetAudioQueue() {
+  if (currentSource) { try { currentSource.stop(); } catch(_){} }
+  if (currentAudCtx) { currentAudCtx.close(); }
+  audioQueue    = {};
+  nextPlayIdx   = 0;
+  isPlaying     = false;
+  pipelineDone  = false;
+  currentAudCtx = null;
+  currentSource = null;
+  document.getElementById('interruptBtn').style.display = 'none';
+}
+
+function enqueueChunk(idx, b64data) {
+  const bytes = Uint8Array.from(atob(b64data), c => c.charCodeAt(0));
+  audioQueue[idx] = bytes.buffer;
+  drainQueue();
+}
+
+function drainQueue() {
+  if (isPlaying) return;
+  if (audioQueue[nextPlayIdx] === undefined) {
+    if (pipelineDone) setState('idle');  // queue empty + pipeline done → go idle
+    return;
+  }
+  playNext();
+}
+
+async function playNext() {
+  const idx = nextPlayIdx;
+  if (audioQueue[idx] === undefined) {
+    isPlaying = false;
+    if (pipelineDone) setState('idle');
+    return;
+  }
+  isPlaying = true;
+  const buf = audioQueue[idx];
+  delete audioQueue[idx];
+  nextPlayIdx++;
+
+  try {
+    currentAudCtx = new AudioContext();
+    const audioBuf = await currentAudCtx.decodeAudioData(buf.slice(0));
+    currentSource  = currentAudCtx.createBufferSource();
+    currentSource.buffer = audioBuf;
+    currentSource.connect(currentAudCtx.destination);
+    currentSource.onended = () => {
+      currentAudCtx.close();
+      currentAudCtx = null;
+      currentSource = null;
+      isPlaying = false;
+      drainQueue();
+    };
+    currentSource.start(0);
+    setState('playing');
+  } catch(e) {
+    console.error('Audio decode error:', e);
+    isPlaying = false;
+    drainQueue();
+  }
+}
+
+// ── Interrupt ─────────────────────────────────────────────────────────────────
+function sendInterrupt() {
+  resetAudioQueue();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'interrupt' }));
+  }
+  setState('idle');
+  setStatus('Interrupted', '');
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function setState(state) {
+  appState = state;
+  const iBtn = document.getElementById('interruptBtn');
+
+  if (state === 'playing' || state === 'processing') {
+    iBtn.style.display = 'block';
+  } else {
+    iBtn.style.display = 'none';
+  }
+
+  if (state === 'idle') {
+    setStatus(autoMode ? 'Auto mode — speak to start' : 'Ready — click to record', autoMode ? 'active' : '');
+    pipelineDone = true;
+  } else if (state === 'recording') {
+    setStatus(autoMode ? 'Recording… (pause to send)' : 'Recording… click to stop', 'active');
+  } else if (state === 'processing') {
+    setStatus('Processing…', 'active');
+  } else if (state === 'playing') {
+    setStatus('Playing… (speak to interrupt)', 'playing');
+  }
+}
+
+function setStatus(msg, cls='') {
+  const el = document.getElementById('statusBar');
+  el.textContent = msg;
+  el.className   = 'status-bar ' + cls;
+}
+
+function updateTranscript(text) {
+  const tb = document.getElementById('transcriptBox');
+  tb.textContent = text || '(no speech detected)';
+  tb.classList.remove('placeholder');
+}
+
+function appendToken(token) {
+  const rb = document.getElementById('responseBox');
+  if (rb.classList.contains('placeholder')) {
+    rb.textContent = '';
+    rb.classList.remove('placeholder');
+  }
+  rb.textContent += token;
+}
+
+function updateMetrics(m) {
+  document.getElementById('m-asr').textContent   = m.asr_s;
+  document.getElementById('m-llm').textContent   = m.llm_s;
+  document.getElementById('m-tts').textContent   = m.tts_s;
+  document.getElementById('m-total').textContent = m.total_s;
+  document.getElementById('tokRate').textContent = `LLM throughput: ${m.tok_s} tok/s`;
+}
+
+function onRefFile(input) {
+  refFile = input.files[0] || null;
+  document.getElementById('refLabel').textContent = refFile ? refFile.name : 'Default: ref.wav';
+}
+
+async function checkServers() {
+  try {
+    const data = await (await fetch('/health')).json();
+    for (const [name, info] of Object.entries(data)) {
+      const dot = document.getElementById(`dot-${name}`);
+      if (dot) dot.className = 'dot ' + (info.status === 'ok' ? 'online' : 'offline');
+    }
+  } catch(e) { console.error('Health check failed', e); }
+}
+
+async function fetchReport() {
+  const out = document.getElementById('reportOut');
+  try {
+    const data = await (await fetch('/report')).json();
+    if (data.error) { out.textContent = data.error; }
+    else {
+      out.textContent =
+        `Sessions: ${data.sessions}\n` +
+        `Avg ASR:   ${data.avg_asr_s}s\n` +
+        `Avg LLM:   ${data.avg_llm_s}s\n` +
+        `Avg TTS:   ${data.avg_tts_s}s\n` +
+        `Avg Total: ${data.avg_total_s}s\n` +
+        `Avg tok/s: ${data.avg_tok_s}`;
+    }
+    out.style.display = 'block';
+  } catch(e) { out.textContent = 'Failed: ' + e.message; out.style.display = 'block'; }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+initMic();
+connectWS();
+checkServers();
+setInterval(checkServers, 10000);
+</script>
+</body>
+</html>
