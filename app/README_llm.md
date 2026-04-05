@@ -1,6 +1,6 @@
 # LLM Microservice
 
-**Model:** `Qwen2.5-1.5B-Instruct` Q4\_K\_M GGUF (~1.1 GB)
+**Model:** `Qwen2.5-3B-Instruct` Q4\_K\_M GGUF (~2.0 GB)
 **Conda env:** `llm`
 **Port:** `8002`
 
@@ -12,7 +12,7 @@
 |---|---|---|---|
 | `POST` | `/generate` | `{"prompt": str}` | `{"response": str, "latency": float, "tok_s": float}` |
 | `POST` | `/generate_stream` | `{"prompt": str}` | SSE stream: `data: {"token": "..."}` … `data: [DONE]` |
-| `GET` | `/health` | — | `{"status": "ok", "model": "qwen2.5-1.5b-q4_k_m"}` |
+| `GET` | `/health` | — | `{"status": "ok", "model": "qwen2.5-3b-q4_k_m"}` |
 
 ---
 
@@ -32,6 +32,12 @@ pip install llama-cpp-python --no-binary :all: --upgrade
 pip install fastapi uvicorn pydantic
 ```
 
+A pre-built wheel for CUDA 13.0 / Blackwell is included in the repository root:
+```
+llama_cpp_python-0.3.16+cuda13.0.sm100.blackwell-cp311-cp311-win_amd64.whl
+```
+Install it directly if it matches your system: `pip install <wheel_file>`.
+
 Verify GPU is used after install:
 ```bash
 python -c "from llama_cpp import Llama; print('OK')"
@@ -43,7 +49,7 @@ python -c "from llama_cpp import Llama; print('OK')"
 
 Place the GGUF file at:
 ```
-models/llm/qwen2.5-1.5b-q4_k_m/qwen2.5-1.5b-instruct-q4_k_m.gguf
+models/llm/qwen2.5-3b-instruct-q4_k_m.gguf
 ```
 
 Download from HuggingFace:
@@ -52,9 +58,9 @@ pip install huggingface_hub
 python -c "
 from huggingface_hub import hf_hub_download
 hf_hub_download(
-    repo_id='Qwen/Qwen2.5-1.5B-Instruct-GGUF',
-    filename='qwen2.5-1.5b-instruct-q4_k_m.gguf',
-    local_dir='models/llm/qwen2.5-1.5b-q4_k_m'
+    repo_id='Qwen/Qwen2.5-3B-Instruct-GGUF',
+    filename='qwen2.5-3b-instruct-q4_k_m.gguf',
+    local_dir='models/llm'
 )
 "
 ```
@@ -71,7 +77,7 @@ python app/llm_server.py
 
 Expected startup output:
 ```
-[LLM] Loading Qwen2.5-1.5B Q4_K_M (n_gpu_layers=-1) ...
+[LLM] Loading Qwen2.5-3B Q4_K_M (n_gpu_layers=-1) ...
 [LLM] Ready
 INFO:     Uvicorn running on http://0.0.0.0:8002
 ```
@@ -82,9 +88,9 @@ INFO:     Uvicorn running on http://0.0.0.0:8002
 
 - **Inference config:** `n_ctx=2048`, `n_threads=4`, `n_gpu_layers=-1` (all layers on GPU)
 - **System prompt:** `"You are a concise voice assistant. Reply in 1-3 sentences max."`
-- **max_tokens:** `150`, **temperature:** `0.7`
-- **Throughput:** ~85–117 tok/s on CUDA (RTX-class GPU), contributes ~0.28 s to end-to-end latency
-- **Streaming:** `/generate_stream` sends tokens via SSE as they are generated, enabling sentence-level TTS overlap
+- **max_tokens:** `400` for conversational turns, **temperature:** `0.7`
+- **Throughput:** ~114 tok/s median on CUDA (RTX-class GPU, range 40–207 tok/s across session turns)
+- **Streaming:** `/generate_stream` sends tokens via SSE as they are generated; the orchestrator uses this to dispatch each completed sentence to TTS in parallel with ongoing generation
 
 ---
 
@@ -94,9 +100,15 @@ INFO:     Uvicorn running on http://0.0.0.0:8002
 # Health check
 curl http://localhost:8002/health
 
-# Generate a reply
+# Generate a reply (blocking)
 curl -X POST http://localhost:8002/generate \
      -H "Content-Type: application/json" \
      -d "{\"prompt\": \"What is machine learning?\"}" \
      -s | python -m json.tool
+
+# Streaming response (SSE)
+curl -X POST http://localhost:8002/generate_stream \
+     -H "Content-Type: application/json" \
+     -d "{\"prompt\": \"What is machine learning?\"}" \
+     -N
 ```
